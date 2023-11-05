@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Passing Buffer Back and Forth</title>
+</head>
+
+<body style="margin:0;">
+    <script src="js/wasm_exec.js"></script>
+    <canvas id="myCanvas" style="position: absolute; height: 100%; width: 100%; image-rendering: pixelated;"></canvas>
+    <script>
+        const canvas = document.getElementById('myCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        ctx.canvas.width  = window.innerWidth;
+        ctx.canvas.height = window.innerHeight;
+
+        scale = 16;
+        canvas.width /= scale;
+        canvas.height /= scale;
+        
+        const width = canvas.width;
+        const height = canvas.height;
+
+
+        window.imageData = ctx.createImageData(width, height).data;
+
+        window.updateFromBuffer = function (buffer) {
+            
+            const imageData = new ImageData(new Uint8ClampedArray(buffer), width, height);
+
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        async function runWasm() {
+            const go = new Go();
+            const wasm = await WebAssembly.instantiateStreaming(fetch('main.wasm'), go.importObject);
+            go.run(wasm.instance);
+            
+            ctx.rect(20, 20, 150, 100);
+            ctx.fillStyle = "red";
+            ctx.fill();
+            
+            setInterval(generateImage, 100);
+        }
+
+        window.onresize = function() {
+            ctx.canvas.width  = window.innerWidth;
+            ctx.canvas.height = window.innerHeight;
+
+            scale = 2;
+
+        //     const width = canvas.width;
+        //     const height = canvas.height;
+
+            window.imageData = ctx.createImageData(window.innerWidth, window.innerWidth).data;
+            generateImage()
+        }
+
+        runWasm();
+    </script>
+</body>
+
+</html>
