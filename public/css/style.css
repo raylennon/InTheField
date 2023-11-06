@@ -1,0 +1,19 @@
+#corner {
+    /* background-color: white; */
+    border-width: 3px;
+    border-style: solid;
+    border-color: white;
+    color: white;
+    font-family: 'Courier New', monospace;
+    text-align: center;
+    border-radius: 20px;
+    font-size: 50px;
+    width: 300px;
+    height: 120px;
+    position: absolute;
+    left: 50px;
+    top: 50px;
+    z-index: 2;
+    padding-top: 0px;
+
+}
