@@ -63,4 +63,8 @@ document.addEventListener('keydown', function(event) {
         console.log("Pressed...")
         importedFunctions.updateGamestate(window.innerWidth/2,window.innerHeight/2,"Pause!")
     }
+    if (event.key === ' ') {
+        console.log("Pressed...")
+        importedFunctions.updateGamestate(window.innerWidth/2,window.innerHeight/2,"Go!")
+    }
   });

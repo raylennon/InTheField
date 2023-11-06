@@ -22,37 +22,30 @@ var xpos float64 = 0
 var ypos float64 = -0.7
 var zpos float64 = 0
 
-var phi = 0
-var theta = math.Pi / 2
+var pitch float64 = 0.0 // TO BE REMOVED
+var yaw float64 = 0.0   //math.Pi / 2
+var bearing [4]float64 = [4]float64{0, 0, 1, 0}
 
 var paused bool = false
 
-func isinsphere(x, y, z float64) bool {
-	return math.Sqrt(x*x+y*y+z*z) < sphere_radius
-}
-
-type Point struct {
-	X, Y, Z float64
-}
-
 const gap float64 = 2
 
-func domain(p Point) bool {
+func domain(p [3]float64) bool {
 	// return math.Abs(math.Cos(p.X)+math.Cos(p.Y)+math.Cos(p.Z)) < 0.2 // P-surface
 	// return math.Abs(math.Cos(p.X)*math.Cos(p.Y)*math.Cos(p.Z)-math.Sin(p.X)*math.Sin(p.Y)*math.Sin(p.Z)) < 0.2 // D-surface
-	if p.Y < 5 {
+	if p[1] < 2 {
 		return false
 	}
-	midway := math.Sin(p.X)*math.Cos(p.Y) + math.Sin(p.Y)*math.Cos(p.Z)*math.Sin(p.Z)*math.Cos(p.X)
+	midway := math.Sin(p[0])*math.Cos(p[1]) + math.Sin(p[1])*math.Cos(p[2])*math.Sin(p[2])*math.Cos(p[0])
 	return math.Abs(midway) < 0.2 // Gyroid
 }
 
-func probe(start Point, direction Point, domain func(Point) bool) float64 {
+func probe(start [3]float64, direction *mat.VecDense, domain func([3]float64) bool) float64 {
 	stepSize := 0.1 // Set a small step size for marching
 	current := start
 	distance := 0.0
 
-	mag := math.Sqrt(math.Pow(direction.X, 2) + math.Pow(direction.Y, 2) + math.Pow(direction.Z, 2))
+	mag := math.Sqrt(math.Pow(direction.At(0, 0), 2) + math.Pow(direction.At(1, 0), 2) + math.Pow(direction.At(2, 0), 2))
 
 	for distance < maxdistance {
 		value := domain(current)
@@ -60,9 +53,9 @@ func probe(start Point, direction Point, domain func(Point) bool) float64 {
 			return distance
 		}
 
-		current.X += direction.X * stepSize / mag
-		current.Y += direction.Y * stepSize / mag
-		current.Z += direction.Z * stepSize / mag
+		current[0] += direction.At(0, 0) * stepSize / mag
+		current[1] += direction.At(1, 0) * stepSize / mag
+		current[2] += direction.At(2, 0) * stepSize / mag
 
 		distance += stepSize
 	}
@@ -77,24 +70,37 @@ var height = int(canvas.Get("height").Int())
 var fwidth = float64(js.Global().Get("window").Get("innerWidth").Float())
 var fheight = float64(js.Global().Get("window").Get("innerHeight").Float())
 
+func Cross(a, b [3]float64) [3]float64 {
+	return [3]float64{a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]}
+}
+
 func updateGamestate(this js.Value, p []js.Value) interface{} {
 
-	if len(p) > 2 && (p[2].String() == "Pause!") {
-		paused = !paused
+	if len(p) > 2 {
+		if p[2].String() == "Pause!" {
+			paused = !paused
+		} else if p[2].String() == "Go!" {
+			xpos += 0.1 * math.Sin(pitch-math.Pi/2) * math.Sin(yaw)
+			ypos -= 0.1 * math.Sin(pitch-math.Pi/2) * math.Cos(yaw)
+			zpos += 0.1 * math.Sin(pitch)
+		}
 	}
 
 	if paused {
 		return nil
 	}
 
-	cursorx := 0.0 //fwidth/2.0
-	cursory := 0.0 //fheight/2.0
+	cursorx := p[0].Float()
+	cursory := p[1].Float()
 
-	cursorx = p[0].Float()
-	cursory = p[1].Float()
+	// ax := Cross([3]float64{bearing[1], bearing[2], bearing[3]}, [3]float64{bearing[1], bearing[2], bearing[3]})
 
-	xpos += ((cursorx - fwidth/2.0) / fwidth) * 1
-	zpos += ((cursory - fheight/2.0) / fheight) * 1
+	// bearing.Apply(func(i, v float64) float64 {
+
+	// }, bearing)
+
+	yaw = math.Mod(yaw-((cursorx-fwidth/2.0)/fwidth)*0.4, 2*math.Pi)
+	pitch = math.Mod(pitch+((cursory-fheight/2.0)/fheight)*0.4, 2*math.Pi)
 
 	return nil
 }
@@ -105,7 +111,7 @@ func generateImage(this js.Value, p []js.Value) interface{} {
 		return nil
 	}
 
-	ypos += 0.2
+	// ypos += 0.2
 
 	imageData := make([]byte, width*height*4)
 
@@ -126,8 +132,23 @@ func generateImage(this js.Value, p []js.Value) interface{} {
 		}
 	}
 
+	screenloc := mat.NewVecDense(3, []float64{0, 0, 0})
+	Rx := mat.NewDense(3, 3, []float64{1, 0, 0, 0, math.Cos(pitch), -math.Sin(pitch), 0.0, math.Sin(pitch), math.Cos(pitch)})
+	Rz := mat.NewDense(3, 3, []float64{math.Cos(yaw), -math.Sin(yaw), 0, math.Sin(yaw), math.Cos(yaw), 0, 0, 0, 1})
+
 	render.Apply(func(i, j int, v float64) float64 {
-		dist := probe(Point{xpos, ypos, zpos}, Point{x.At(i, j), FL, y.At(i, j)}, domain)
+
+		screenloc.SetVec(0, x.At(i, j))
+		screenloc.SetVec(1, FL)
+		screenloc.SetVec(2, y.At(i, j))
+
+		screenloc.MulVec(Rx, screenloc)
+		screenloc.MulVec(Rz, screenloc)
+
+		dist := probe(
+			[3]float64{xpos, ypos, zpos},
+			screenloc,
+			domain)
 		return dist
 	}, render)
 
