@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math"
 	"syscall/js"
 
@@ -22,7 +21,11 @@ const sphere_radius = 0.5
 var xpos float64 = 0
 var ypos float64 = -0.7
 var zpos float64 = 0
-var maxr float64
+
+var phi = 0
+var theta = math.Pi / 2
+
+var paused bool = false
 
 func isinsphere(x, y, z float64) bool {
 	return math.Sqrt(x*x+y*y+z*z) < sphere_radius
@@ -35,20 +38,17 @@ type Point struct {
 const gap float64 = 2
 
 func domain(p Point) bool {
-	return math.Abs(math.Cos(p.X)+math.Cos(p.Y)+math.Cos(p.Z)) < 0.5
-	// y1 := 0.0
-	// if p.Y < 4 {
-	// 	y1 = 1000.0
-	// } else {
-	// 	y1 = math.Mod(p.Y, gap) - gap/2
-	// }
-	// x1 := p.X //math.Mod(p.X, gap) - gap/2
-	// return math.Sqrt(x1*x1+y1*y1+(math.Mod(p.Z, gap)-gap/2)*(math.Mod(p.Z, gap)-gap/2)) < sphere_radius
-
+	// return math.Abs(math.Cos(p.X)+math.Cos(p.Y)+math.Cos(p.Z)) < 0.2 // P-surface
+	// return math.Abs(math.Cos(p.X)*math.Cos(p.Y)*math.Cos(p.Z)-math.Sin(p.X)*math.Sin(p.Y)*math.Sin(p.Z)) < 0.2 // D-surface
+	if p.Y < 5 {
+		return false
+	}
+	midway := math.Sin(p.X)*math.Cos(p.Y) + math.Sin(p.Y)*math.Cos(p.Z)*math.Sin(p.Z)*math.Cos(p.X)
+	return math.Abs(midway) < 0.2 // Gyroid
 }
 
 func probe(start Point, direction Point, domain func(Point) bool) float64 {
-	stepSize := 0.05 // Set a small step size for marching
+	stepSize := 0.1 // Set a small step size for marching
 	current := start
 	distance := 0.0
 
@@ -70,24 +70,46 @@ func probe(start Point, direction Point, domain func(Point) bool) float64 {
 	return -1
 }
 
-func initialize(this js.Value, p []js.Value) interface{} {
+var canvas = js.Global().Get("document").Call("getElementById", "myCanvas")
+var width = int(canvas.Get("width").Int())
+var height = int(canvas.Get("height").Int())
+
+var fwidth = float64(js.Global().Get("window").Get("innerWidth").Float())
+var fheight = float64(js.Global().Get("window").Get("innerHeight").Float())
+
+func updateGamestate(this js.Value, p []js.Value) interface{} {
+
+	if len(p) > 2 && (p[2].String() == "Pause!") {
+		paused = !paused
+	}
+
+	if paused {
+		return nil
+	}
+
+	cursorx := 0.0 //fwidth/2.0
+	cursory := 0.0 //fheight/2.0
+
+	cursorx = p[0].Float()
+	cursory = p[1].Float()
+
+	xpos += ((cursorx - fwidth/2.0) / fwidth) * 1
+	zpos += ((cursory - fheight/2.0) / fheight) * 1
+
 	return nil
 }
 
 func generateImage(this js.Value, p []js.Value) interface{} {
 
-	zpos += 0.1
-	// xpos += 0.1
+	if paused == true {
+		return nil
+	}
 
-	// imageBuffer := js.Global().Get("imageData")
-
-	canvas := js.Global().Get("document").Call("getElementById", "myCanvas")
-	width := int(canvas.Get("width").Int())
-	height := int(canvas.Get("height").Int())
+	ypos += 0.2
 
 	imageData := make([]byte, width*height*4)
 
-	sw = 1 //math.Tan(FOV/2) * 2 * FL
+	sw = 0.8 //math.Tan(FOV/2) * 2 * FL
 	sh = sw * (float64(height) / float64(width))
 
 	render := mat.NewDense(width, height, nil)
@@ -109,7 +131,7 @@ func generateImage(this js.Value, p []js.Value) interface{} {
 		return dist
 	}, render)
 
-	fmt.Println(xpos)
+	// fmt.Println(xpos)
 	// dmax := 4.0
 	// dmin := 0.0
 	for j := 0; j < height; j++ {
@@ -126,9 +148,9 @@ func generateImage(this js.Value, p []js.Value) interface{} {
 				// fmt.Println("Bonk!")
 				// val := 255.0 * math.Pow((1-(math.Max(math.Min(dmax, r), dmin)-dmin)/(dmax-dmin)), 3)
 
-				val := 255.0 * (math.Exp(-r / 5))
+				val := 255.0 * (math.Exp(-r / 1.5))
 
-				imageData[4*pos+0] = uint8(val)
+				imageData[4*pos+0] = uint8(val) // * (math.Sin(1*(ypos+r)) + 1) / 2.0)
 				imageData[4*pos+1] = uint8(val)
 				imageData[4*pos+2] = uint8(val)
 			}
@@ -147,7 +169,7 @@ func main() {
 
 	// Generate the image
 	js.Global().Set("generateImage", js.FuncOf(generateImage))
-	js.Global().Set("initialize", js.FuncOf(initialize))
+	js.Global().Set("updateGamestate", js.FuncOf(updateGamestate))
 
 	<-c
 }
