@@ -1,71 +1,65 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"syscall/js"
 
 	"gonum.org/v1/gonum/mat"
+	"gonum.org/v1/gonum/num/quat"
 )
 
-// or "image/png" for PNG
+// IMPORTED JAVASCRIPT INFO
+var canvas = js.Global().Get("document").Call("getElementById", "myCanvas")
+var width = int(canvas.Get("width").Int())
+var height = int(canvas.Get("height").Int())
 
-const FL float64 = 0.2 * 0.75   //math.Pi / 6  // Focal length
-const FOV float64 = math.Pi / 2 // Field-of-View: radians
-const maxdistance float64 = 20
+// CAMERA SETTINGS
+const FL float64 = 0.2 * 0.75  // Focal length
+const maxdistance float64 = 20 // Distance at which we give up
+const stepsize = 0.1           // affects "smoothness", qualitatively
 
-var sw float64 // sensor width
-var sh float64 // sensor height
+var sw float64 = 0.8                                     // sensor width
+var sh float64 = sw * (float64(height) / float64(width)) // sensor height
 
-const sphere_radius = 0.5
-
-var xpos float64 = 0
-var ypos float64 = -0.7
-var zpos float64 = 0
-
-var pitch float64 = 0.0 // TO BE REMOVED
-var yaw float64 = 0.0   //math.Pi / 2
-var bearing [4]float64 = [4]float64{0, 0, 1, 0}
-
+// PLAYER VARIABLES
+var pos = mat.NewVecDense(3, []float64{0, 0, 0})
+var dir = quat.Number{Real: 0.0, Imag: 0.0, Jmag: 1.0, Kmag: 0.0}
 var paused bool = false
+var movespeed float64 = 0.1
+var turnspeed float64 = 0.3
 
-const gap float64 = 2
+var R = mat.NewDense(3, 3, nil)
 
+// TO-DO: TRACK VELOCITY
+
+// Domain: the environment field
 func domain(p [3]float64) bool {
-	// return math.Abs(math.Cos(p.X)+math.Cos(p.Y)+math.Cos(p.Z)) < 0.2 // P-surface
-	// return math.Abs(math.Cos(p.X)*math.Cos(p.Y)*math.Cos(p.Z)-math.Sin(p.X)*math.Sin(p.Y)*math.Sin(p.Z)) < 0.2 // D-surface
-	if p[1] < 2 {
+	if p[1] < 2 { // Entrance
 		return false
 	}
 	midway := math.Sin(p[0])*math.Cos(p[1]) + math.Sin(p[1])*math.Cos(p[2])*math.Sin(p[2])*math.Cos(p[0])
-	return math.Abs(midway) < 0.2 // Gyroid
+	return math.Abs(midway) < 0.2 // Gyroid Approximation
 }
 
+// TODO: Replace this function with something smarter/ faster. Root-finding?
+// https://eprints.whiterose.ac.uk/3762/1/gamito_newraycastvisual.pdf
 func probe(start [3]float64, direction *mat.VecDense, domain func([3]float64) bool) float64 {
-	stepSize := 0.1 // Set a small step size for marching
 	current := start
 	distance := 0.0
-
 	mag := math.Sqrt(math.Pow(direction.At(0, 0), 2) + math.Pow(direction.At(1, 0), 2) + math.Pow(direction.At(2, 0), 2))
-
 	for distance < maxdistance {
 		value := domain(current)
 		if value {
 			return distance
 		}
-
-		current[0] += direction.At(0, 0) * stepSize / mag
-		current[1] += direction.At(1, 0) * stepSize / mag
-		current[2] += direction.At(2, 0) * stepSize / mag
-
-		distance += stepSize
+		current[0] += direction.At(0, 0) * stepsize / mag
+		current[1] += direction.At(1, 0) * stepsize / mag
+		current[2] += direction.At(2, 0) * stepsize / mag
+		distance += stepsize
 	}
-
 	return -1
 }
-
-var canvas = js.Global().Get("document").Call("getElementById", "myCanvas")
-var width = int(canvas.Get("width").Int())
-var height = int(canvas.Get("height").Int())
 
 var fwidth = float64(js.Global().Get("window").Get("innerWidth").Float())
 var fheight = float64(js.Global().Get("window").Get("innerHeight").Float())
@@ -80,27 +74,51 @@ func updateGamestate(this js.Value, p []js.Value) interface{} {
 		if p[2].String() == "Pause!" {
 			paused = !paused
 		} else if p[2].String() == "Go!" {
-			xpos += 0.1 * math.Sin(pitch-math.Pi/2) * math.Sin(yaw)
-			ypos -= 0.1 * math.Sin(pitch-math.Pi/2) * math.Cos(yaw)
-			zpos += 0.1 * math.Sin(pitch)
+
+			forward := mat.NewVecDense(3, []float64{0, 1, 0})
+			forward.MulVec(R, forward)
+
+			pos.SetVec(0, pos.At(0, 0)+forward.At(0, 0)*movespeed)
+			pos.SetVec(1, pos.At(1, 0)+forward.At(1, 0)*movespeed)
+			pos.SetVec(2, pos.At(2, 0)+forward.At(2, 0)*movespeed)
+			// TODO: update position
 		}
 	}
-
 	if paused {
 		return nil
 	}
 
-	cursorx := p[0].Float()
-	cursory := p[1].Float()
+	cursorx := turnspeed * (p[0].Float() - fwidth/2.0) / fwidth
+	cursory := 2 * turnspeed * (p[1].Float() - fheight/2.0) / fwidth
+	cursormag := math.Sqrt(cursorx*cursorx + cursory*cursory)
+	if cursormag > 0 {
+		a := mat.NewVecDense(3, []float64{0, FL, 0})
+		b := mat.NewVecDense(3, []float64{cursorx * fwidth, FL, cursory * fwidth})
 
-	// ax := Cross([3]float64{bearing[1], bearing[2], bearing[3]}, [3]float64{bearing[1], bearing[2], bearing[3]})
+		axis := mat.NewVecDense(3, []float64{
+			a.At(1, 0)*b.At(2, 0) - a.At(2, 0)*b.At(1, 0),
+			a.At(2, 0)*b.At(0, 0) - a.At(0, 0)*b.At(2, 0),
+			a.At(0, 0)*b.At(1, 0) - a.At(1, 0)*b.At(0, 0),
+		})
+		fmt.Println(axis)
+		axis.ScaleVec(1.0/math.Sqrt(axis.At(0, 0)*axis.At(0, 0)+axis.At(1, 0)*axis.At(1, 0)+axis.At(2, 0)*axis.At(2, 0)), axis)
+		fmt.Println(axis)
+		axis.ScaleVec(cursormag, axis)
+		axis.MulVec(R, axis)
 
-	// bearing.Apply(func(i, v float64) float64 {
+		rot := quat.Number{Real: math.Cos(cursorx / 2.0), Imag: axis.At(0, 0), Jmag: axis.At(1, 0), Kmag: axis.At(2, 0)}
+		// rot := quat.Number{Real: math.Cos(cursory / 2.0), Imag: math.Sin(cursory / 2), Jmag: 0.0, Kmag: 0.0}
+		// rot = quat.Mul(rot1, rot)
 
-	// }, bearing)
+		// rot := quat.Number{Real: math.Cos(cursory / 2.0), Imag: (cursory / cursormag) * math.Sin(cursormag/2), Jmag: 0.0, Kmag: (cursorx / cursormag) * math.Sin(cursormag/2)}
+		// yrot := quat.Number{Real: math.Cos(cursory / 2.0), Imag: math.Sin(cursory / 2), Jmag: 0.0, Kmag: 0.0}
 
-	yaw = math.Mod(yaw-((cursorx-fwidth/2.0)/fwidth)*0.4, 2*math.Pi)
-	pitch = math.Mod(pitch+((cursory-fheight/2.0)/fheight)*0.4, 2*math.Pi)
+		rot = quat.Scale(1.0/quat.Abs(rot), rot) // maybe unnecessary
+		// yrot = quat.Scale(1.0/quat.Abs(yrot), yrot) // maybe unnecessary
+
+		dir = quat.Mul(rot, dir)
+		dir = quat.Scale(1.0/quat.Abs(dir), dir) // maybe unnecessary
+	}
 
 	return nil
 }
@@ -111,19 +129,11 @@ func generateImage(this js.Value, p []js.Value) interface{} {
 		return nil
 	}
 
-	// ypos += 0.2
-
 	imageData := make([]byte, width*height*4)
-
-	sw = 0.8 //math.Tan(FOV/2) * 2 * FL
-	sh = sw * (float64(height) / float64(width))
 
 	render := mat.NewDense(width, height, nil)
 	x := mat.DenseCopyOf(render)
 	y := mat.DenseCopyOf(render)
-
-	// fmt.Println(width)
-	// fmt.Println(height)
 
 	for i := 0; i < width; i++ {
 		for j := 0; j < height; j++ {
@@ -133,8 +143,14 @@ func generateImage(this js.Value, p []js.Value) interface{} {
 	}
 
 	screenloc := mat.NewVecDense(3, []float64{0, 0, 0})
-	Rx := mat.NewDense(3, 3, []float64{1, 0, 0, 0, math.Cos(pitch), -math.Sin(pitch), 0.0, math.Sin(pitch), math.Cos(pitch)})
-	Rz := mat.NewDense(3, 3, []float64{math.Cos(yaw), -math.Sin(yaw), 0, math.Sin(yaw), math.Cos(yaw), 0, 0, 0, 1})
+
+	s := 1.0 / math.Pow(quat.Abs(dir), 2)
+
+	R = mat.NewDense(3, 3, []float64{
+		1 - 2*s*(dir.Jmag*dir.Jmag+dir.Kmag*dir.Kmag), 2 * s * (dir.Imag*dir.Jmag - dir.Kmag*dir.Real), 2 * s * (dir.Imag*dir.Kmag + dir.Jmag*dir.Real),
+		2 * s * (dir.Imag*dir.Jmag + dir.Kmag*dir.Real), 1 - 2*s*(dir.Imag*dir.Imag+dir.Kmag*dir.Kmag), 2 * s * (dir.Jmag*dir.Kmag - dir.Imag*dir.Real),
+		2 * s * (dir.Imag*dir.Kmag - dir.Jmag*dir.Real), 2 * s * (dir.Jmag*dir.Kmag + dir.Imag*dir.Real), 1 - 2*s*(dir.Imag*dir.Imag+dir.Jmag*dir.Jmag),
+	})
 
 	render.Apply(func(i, j int, v float64) float64 {
 
@@ -142,38 +158,29 @@ func generateImage(this js.Value, p []js.Value) interface{} {
 		screenloc.SetVec(1, FL)
 		screenloc.SetVec(2, y.At(i, j))
 
-		screenloc.MulVec(Rx, screenloc)
-		screenloc.MulVec(Rz, screenloc)
+		screenloc.MulVec(R, screenloc)
 
 		dist := probe(
-			[3]float64{xpos, ypos, zpos},
+			[3]float64(pos.RawVector().Data),
 			screenloc,
 			domain)
 		return dist
 	}, render)
 
-	// fmt.Println(xpos)
-	// dmax := 4.0
-	// dmin := 0.0
 	for j := 0; j < height; j++ {
 		for i := 0; i < width; i++ {
 
-			pos := width*j + i
+			k := width*j + i
 
-			imageData[4*pos+3] = 255
+			imageData[4*k+3] = 255
 			r := render.At(i, j)
 			if r < 0 {
-				// imageData[4*pos] = 100
-				continue
+				continue // the terrifying void
 			} else {
-				// fmt.Println("Bonk!")
-				// val := 255.0 * math.Pow((1-(math.Max(math.Min(dmax, r), dmin)-dmin)/(dmax-dmin)), 3)
-
 				val := 255.0 * (math.Exp(-r / 1.5))
-
-				imageData[4*pos+0] = uint8(val) // * (math.Sin(1*(ypos+r)) + 1) / 2.0)
-				imageData[4*pos+1] = uint8(val)
-				imageData[4*pos+2] = uint8(val)
+				imageData[4*k+0] = uint8(val * 0.8) // * (math.Sin(1*(ypos+r)) + 1) / 2.0)
+				imageData[4*k+1] = uint8(val)
+				imageData[4*k+2] = uint8(val * 0.8)
 			}
 		}
 	}
@@ -188,7 +195,6 @@ func generateImage(this js.Value, p []js.Value) interface{} {
 func main() {
 	c := make(chan struct{}, 0)
 
-	// Generate the image
 	js.Global().Set("generateImage", js.FuncOf(generateImage))
 	js.Global().Set("updateGamestate", js.FuncOf(updateGamestate))
 
