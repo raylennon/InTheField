@@ -4,7 +4,7 @@ const ctx = canvas.getContext('2d');
 ctx.canvas.width = window.innerWidth;
 ctx.canvas.height = window.innerHeight;
 
-scale = 12;
+scale = 16;
 canvas.width = window.innerWidth/scale;
 canvas.height = window.innerHeight/scale;
 

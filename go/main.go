@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 	"syscall/js"
-
+	"github.com/khezen/rootfinding"
 	"gonum.org/v1/gonum/mat"
 	"gonum.org/v1/gonum/num/quat"
 )
@@ -40,6 +40,34 @@ func domain(p [3]float64) bool {
 	}
 	midway := math.Sin(p[0])*math.Cos(p[1]) + math.Sin(p[1])*math.Cos(p[2])*math.Sin(p[2])*math.Cos(p[0])
 	return math.Abs(midway) < 0.2 // Gyroid Approximation
+}
+
+func domain_bb(p [3]float64) float64 {
+	if p[1]<2 {
+		return 1
+	}
+	return math.Sin(p[0])*math.Cos(p[1]) + math.Sin(p[1])*math.Cos(p[2])*math.Sin(p[2])*math.Cos(p[0])
+}
+
+
+func probe2(start [3]float64, direction *mat.VecDense) float64 {
+	fac := math.Sqrt(direction.At(0,0)*direction.At(0,0) + direction.At(1,0)*direction.At(1,0) + direction.At(2,0)*direction.At(2,0))
+	conv := func(t float64) float64{
+		return domain_bb([3]float64{
+			start[0]+t*direction.At(0,0), 
+			start[1]+t*direction.At(1,0), 
+			start[2]+t*direction.At(2,0), 
+		})
+	}
+	result, err := rootfinding.Brent(conv, 0.01, 5/fac, 3)
+	// fmt.Println(err)
+	if err != nil {
+        return -1
+    }
+	if false {
+		fmt.Println("false.")
+	}
+	return math.Abs(result)*fac
 }
 
 // TODO: Replace this function with something smarter/ faster. Root-finding?
@@ -81,7 +109,7 @@ func updateGamestate(this js.Value, p []js.Value) interface{} {
 			pos.SetVec(0, pos.At(0, 0)+forward.At(0, 0)*movespeed)
 			pos.SetVec(1, pos.At(1, 0)+forward.At(1, 0)*movespeed)
 			pos.SetVec(2, pos.At(2, 0)+forward.At(2, 0)*movespeed)
-			// TODO: update position
+			// TODO: Extend to WASD for strafing & backward
 		}
 	}
 	if paused {
@@ -100,9 +128,10 @@ func updateGamestate(this js.Value, p []js.Value) interface{} {
 			a.At(2, 0)*b.At(0, 0) - a.At(0, 0)*b.At(2, 0),
 			a.At(0, 0)*b.At(1, 0) - a.At(1, 0)*b.At(0, 0),
 		})
-		fmt.Println(axis)
+
+		// fmt.Println(axis)
 		axis.ScaleVec(1.0/math.Sqrt(axis.At(0, 0)*axis.At(0, 0)+axis.At(1, 0)*axis.At(1, 0)+axis.At(2, 0)*axis.At(2, 0)), axis)
-		fmt.Println(axis)
+		// fmt.Println(axis)
 		axis.ScaleVec(cursormag, axis)
 		axis.MulVec(R, axis)
 
@@ -160,10 +189,11 @@ func generateImage(this js.Value, p []js.Value) interface{} {
 
 		screenloc.MulVec(R, screenloc)
 
-		dist := probe(
+		dist := probe2(
 			[3]float64(pos.RawVector().Data),
 			screenloc,
-			domain)
+			// domain,
+		)
 		return dist
 	}, render)
 
@@ -174,8 +204,10 @@ func generateImage(this js.Value, p []js.Value) interface{} {
 
 			imageData[4*k+3] = 255
 			r := render.At(i, j)
-			if r < 0 {
+			if r ==-1 {
+				imageData[4*k+0] = uint8(255) // * (math.Sin(1*(ypos+r)) + 1) / 2.0)
 				continue // the terrifying void
+
 			} else {
 				val := 255.0 * (math.Exp(-r / 1.5))
 				imageData[4*k+0] = uint8(val * 0.8) // * (math.Sin(1*(ypos+r)) + 1) / 2.0)
