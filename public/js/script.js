@@ -4,18 +4,18 @@ const ctx = canvas.getContext('2d');
 ctx.canvas.width = window.innerWidth;
 ctx.canvas.height = window.innerHeight;
 
-scale = 16;
-canvas.width = window.innerWidth/scale;
-canvas.height = window.innerHeight/scale;
+scale = 18;
+canvas.width = window.innerWidth / scale;
+canvas.height = window.innerHeight / scale;
 
 const width = canvas.width;
 const height = canvas.height;
 
-window.mouseX = window.innerWidth/2;
-window.mouseY = window.innerHeight/2;
+window.mouseX = window.innerWidth / 2;
+window.mouseY = window.innerHeight / 2;
 
-document.addEventListener('DOMContentLoaded', function() {
-    document.addEventListener('mousemove', function(event) {
+document.addEventListener('DOMContentLoaded', function () {
+    document.addEventListener('mousemove', function (event) {
         // Store the cursor position in global variables
         window.mouseX = event.clientX;
         window.mouseY = event.clientY;
@@ -47,6 +47,7 @@ async function initializeWasm() {
     // updateGamestate();   
     importedFunctions.generateImage = generateImage;
     importedFunctions.updateGamestate = updateGamestate;
+    // importedFunctions.getImagePixel = getImagePixel;
 }
 
 function gameLoop() {
@@ -58,13 +59,11 @@ initializeWasm().then(() => {
     setInterval(gameLoop, 100);
 });
 
-document.addEventListener('keydown', function(event) {
+document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape' || event.key === 'Esc') {
         console.log("Pressed...")
-        importedFunctions.updateGamestate(window.innerWidth/2,window.innerHeight/2,"Pause!")
+        importedFunctions.updateGamestate(window.innerWidth / 2, window.innerHeight / 2, "Pause!")
+    } else if (event.key === ' ') {
+        importedFunctions.updateGamestate(window.innerWidth / 2, window.innerHeight / 2, "Blast!")
     }
-    if (event.key === ' ') {
-        console.log("Pressed...")
-        importedFunctions.updateGamestate(window.innerWidth/2,window.innerHeight/2,"Go!")
-    }
-  });
+});
